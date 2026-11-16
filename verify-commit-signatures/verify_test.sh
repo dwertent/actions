@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026-Present The Zarf Authors
 #
 # Tests verify.sh against canned GitHub API responses by placing a fake `gh` first on PATH.

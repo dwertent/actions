@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026-Present The Zarf Authors
 #
 # Fails when a pull request contains commits without a GitHub-verified signature.
