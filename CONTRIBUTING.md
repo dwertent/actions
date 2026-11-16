@@ -1,6 +1,6 @@
 # Contributing to zarf-dev/actions
 
-This repository holds GitHub Actions shared across Zarf repositories. The rules below apply to every change, whether written by a person or an agent. Each rule has an ID so reviews can cite them.
+This repository holds GitHub Actions shared across Zarf repositories. The rules below apply to every change. Each rule has an ID so reviews can cite them.
 
 The rules say what every action must provide, not how to build it. Language, file structure, and test tooling are the action author's decision.
 
