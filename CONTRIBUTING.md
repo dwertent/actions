@@ -30,7 +30,7 @@ The rules say what every action must provide, not how to build it. Language, fil
 - **A5.** Source files carry the SPDX header in the comment syntax of their language:
 
   ```
-  SPDX-License-Identifier: MIT
+  SPDX-License-Identifier: Apache-2.0
   SPDX-FileCopyrightText: 2026-Present The Zarf Authors
   ```
 
