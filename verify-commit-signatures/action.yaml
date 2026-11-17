@@ -1,0 +1,26 @@
+name: verify-commit-signatures
+description: "Fails when a pull request contains commits without a GitHub-verified signature"
+
+inputs:
+  max-commits:
+    description: "Maximum number of commits a pull request may contain. The GitHub API lists at most 250 commits per pull request, so larger values are rejected."
+    required: false
+    default: "250"
+  token:
+    description: "Token used to list the pull request commits; needs pull-requests read access"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        MAX_COMMITS: ${{ inputs.max-commits }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        COMMIT_COUNT: ${{ github.event.pull_request.commits }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/verify.sh"
