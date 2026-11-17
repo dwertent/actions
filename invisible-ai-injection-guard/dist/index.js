@@ -26364,14 +26364,23 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 // src/bots.ts
-var NO_MARKERS = { html: [], markdown: [] };
+var NO_MARKERS = { html: [], markdown: [], mentionBreaks: false };
 var KNOWN_BOTS = {
-  // e.g. `[//]: # (dependabot-automerge-start)`
-  "dependabot[bot]": { html: [], markdown: [/^dependabot-[a-z]+(?:-[a-z]+)*$/u] }
+  // Markers such as `[//]: # (dependabot-automerge-start)`. In the release notes it copies, mentions are written as
+  // `@\u{200B}user`, and raw HTML it strips is replaced by `<!-- raw HTML omitted -->`.
+  "dependabot[bot]": {
+    html: [/^raw HTML omitted$/u],
+    markdown: [/^dependabot-[a-z]+(?:-[a-z]+)*$/u],
+    mentionBreaks: true
+  }
 };
 function markersFor(logins) {
   const bots = logins.map((login) => KNOWN_BOTS[login] ?? NO_MARKERS);
-  return { html: bots.flatMap((b) => b.html), markdown: bots.flatMap((b) => b.markdown) };
+  return {
+    html: bots.flatMap((b) => b.html),
+    markdown: bots.flatMap((b) => b.markdown),
+    mentionBreaks: bots.some((b) => b.mentionBreaks)
+  };
 }
 
 // src/types.ts
@@ -27132,6 +27141,9 @@ var ZWNJ = 8204;
 var ZWJ = 8205;
 var VS16 = 65039;
 var BOM = 65279;
+var ZWSP = 8203;
+var AT = 64;
+var LOGIN_CHAR = /[A-Za-z0-9]/u;
 var SOFT_HYPHEN = 173;
 var INVISIBLE = /* @__PURE__ */ new Set([
   847,
@@ -27199,7 +27211,7 @@ function toCodePoints(text) {
 function is(re, cp) {
   return cp !== void 0 && re.test(String.fromCodePoint(cp));
 }
-function detectUnicode(text) {
+function detectUnicode(text, options = { allowMentionBreaks: false }) {
   const cps = toCodePoints(text);
   const findings = [];
   let i = 0;
@@ -27216,13 +27228,13 @@ function detectUnicode(text) {
     const run2 = cps.slice(i, end);
     const prev = cps[i - 1]?.cp;
     const next = cps[end]?.cp;
-    const finding2 = evaluateRun(category, run2, prev, next, i === 0);
+    const finding2 = evaluateRun(category, run2, prev, next, i === 0, options);
     if (finding2) findings.push({ ...finding2, index: current.index });
     i = end;
   }
   return findings;
 }
-function evaluateRun(category, run2, prev, next, atStart) {
+function evaluateRun(category, run2, prev, next, atStart, options) {
   const codes = run2.map((c) => c.cp);
   const labels = summarizeCodePoints(codes);
   switch (category) {
@@ -27270,6 +27282,7 @@ function evaluateRun(category, run2, prev, next, atStart) {
         if (cp === BOM && atStart) return void 0;
         if (cp === ZWJ && isEmojiJoin(prev, next)) return void 0;
         if ((cp === ZWJ || cp === ZWNJ) && isScriptJoin(prev, next)) return void 0;
+        if (cp === ZWSP && options.allowMentionBreaks && prev === AT && is(LOGIN_CHAR, next)) return void 0;
       }
       const onlySoftHyphen = codes.every((cp) => cp === SOFT_HYPHEN);
       const severity = onlySoftHyphen ? "low" : codes.length >= 8 ? "high" : "medium";
@@ -27314,7 +27327,7 @@ var DEFAULT_SCAN_OPTIONS = {
 };
 function scanField(text, field, options = DEFAULT_SCAN_OPTIONS) {
   if (text === "") return [];
-  const raw = [...detectUnicode(text)];
+  const raw = [...detectUnicode(text, { allowMentionBreaks: options.allowedMarkers.mentionBreaks })];
   if (field !== "title") {
     const masked = maskCode(text);
     const markup = {

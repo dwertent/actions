@@ -99,7 +99,9 @@ If the comment is later edited to remove the hidden content, its report is marke
 ### Trusted bots
 
 Some bots write hidden markers into their own text, for example Dependabot's
-`[//]: # (dependabot-automerge-start)`. List them in `trusted-bots` to allow those markers:
+`[//]: # (dependabot-automerge-start)`. In the release notes it copies, Dependabot also puts a zero-width space
+after `@` (`@\u{200B}user`) so the upstream authors are not notified, and replaces raw HTML it strips with
+`<!-- raw HTML omitted -->`. List these bots in `trusted-bots` to allow all of these:
 
 ```yaml
 - uses: zarf-dev/actions/invisible-ai-injection-guard@<commit-sha>
@@ -114,7 +116,8 @@ works for `exempt-users`.
 
 A trusted bot is **not** exempt from scanning:
 
-- Only that bot's known markers are allowed, matched by narrow patterns. Anything else hidden in its text is still
+- Only that bot's known markers are allowed, matched by narrow patterns. A mention break is allowed only as a single
+  zero-width space between `@` and a letter or digit. Anything else hidden in its text is still
   reported. This matters because Dependabot copies release notes and changelogs from the dependency into the pull
   request, so a malicious or compromised package can hide instructions there.
 - The author must be a GitHub App account (`Bot` type with a login ending in `[bot]`). User names cannot contain

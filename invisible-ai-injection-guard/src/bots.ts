@@ -7,9 +7,14 @@ export interface BotMarkers {
   html: readonly RegExp[]
   /** Allowed Markdown link-reference comment contents (`[//]: # (...)`). */
   markdown: readonly RegExp[]
+  /**
+   * Allow a single zero-width space between `@` and a login (`@\u{200B}user`), which keeps copied text from
+   * notifying that user. One character between two visible ones cannot carry a hidden payload.
+   */
+  mentionBreaks: boolean
 }
 
-export const NO_MARKERS: BotMarkers = { html: [], markdown: [] }
+export const NO_MARKERS: BotMarkers = { html: [], markdown: [], mentionBreaks: false }
 
 /**
  * Bots whose markers can be allowed with `trusted-bots`. Keys are GitHub logins. A login ending in `[bot]`
@@ -18,11 +23,20 @@ export const NO_MARKERS: BotMarkers = { html: [], markdown: [] }
  * notes it copies from a dependency) is still reported.
  */
 export const KNOWN_BOTS: Readonly<Record<string, BotMarkers>> = {
-  // e.g. `[//]: # (dependabot-automerge-start)`
-  'dependabot[bot]': { html: [], markdown: [/^dependabot-[a-z]+(?:-[a-z]+)*$/u] }
+  // Markers such as `[//]: # (dependabot-automerge-start)`. In the release notes it copies, mentions are written as
+  // `@\u{200B}user`, and raw HTML it strips is replaced by `<!-- raw HTML omitted -->`.
+  'dependabot[bot]': {
+    html: [/^raw HTML omitted$/u],
+    markdown: [/^dependabot-[a-z]+(?:-[a-z]+)*$/u],
+    mentionBreaks: true
+  }
 }
 
 export function markersFor(logins: readonly string[]): BotMarkers {
   const bots = logins.map((login) => KNOWN_BOTS[login] ?? NO_MARKERS)
-  return { html: bots.flatMap((b) => b.html), markdown: bots.flatMap((b) => b.markdown) }
+  return {
+    html: bots.flatMap((b) => b.html),
+    markdown: bots.flatMap((b) => b.markdown),
+    mentionBreaks: bots.some((b) => b.mentionBreaks)
+  }
 }

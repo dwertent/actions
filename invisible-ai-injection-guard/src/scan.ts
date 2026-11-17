@@ -30,7 +30,7 @@ export const DEFAULT_SCAN_OPTIONS: ScanOptions = {
 /** Scans one field. Titles are plain text, so only Unicode checks apply to them; bodies and comments are Markdown. */
 export function scanField(text: string, field: Field, options: ScanOptions = DEFAULT_SCAN_OPTIONS): Finding[] {
   if (text === '') return []
-  const raw: DetectorFinding[] = [...detectUnicode(text)]
+  const raw: DetectorFinding[] = [...detectUnicode(text, { allowMentionBreaks: options.allowedMarkers.mentionBreaks })]
   if (field !== 'title') {
     const masked = maskCode(text)
     const markup = {

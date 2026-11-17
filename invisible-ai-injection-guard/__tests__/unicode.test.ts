@@ -103,3 +103,21 @@ describe('detectUnicode', () => {
     expect(detectUnicode(text)[0]?.index).toBe(3)
   })
 })
+
+describe('detectUnicode mention breaks', () => {
+  const zwsp = cp(0x200b)
+  const allow = { allowMentionBreaks: true }
+
+  it('allows a single zero-width space between @ and a login when enabled', () => {
+    const text = `Thanks <code>@${zwsp}dolmen</code> and @${zwsp}VojtechVitek`
+    expect(detectUnicode(text, allow)).toEqual([])
+    expect(detectUnicode(text)).toHaveLength(2)
+  })
+
+  it('still reports zero-width spaces anywhere else', () => {
+    expect(detectUnicode(`a${zwsp}b`, allow)).toHaveLength(1)
+    expect(detectUnicode(`@${zwsp}${zwsp}user`, allow)).toHaveLength(1)
+    expect(detectUnicode(`@${zwsp} user`, allow)).toHaveLength(1)
+    expect(detectUnicode(`@${cp(0x200c)}user`, allow)).toHaveLength(1)
+  })
+})

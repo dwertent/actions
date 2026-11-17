@@ -10,5 +10,8 @@ expect-detected: false
 
 Bumps a dependency.
 
+<p>Release notes with stripped markup: <!-- raw HTML omitted --></p>
+<li>fix by <code>@{U+200B}dolmen</code></li>
+
 [//]: # 'dependabot-automerge-start'
 [//]: # 'dependabot-automerge-end'

@@ -25,6 +25,9 @@ const ZWNJ = 0x200c
 const ZWJ = 0x200d
 const VS16 = 0xfe0f
 const BOM = 0xfeff
+const ZWSP = 0x200b
+const AT = 0x40
+const LOGIN_CHAR = /[A-Za-z0-9]/u
 const SOFT_HYPHEN = 0x00ad
 
 /** Characters that render as nothing or as blank space but are not whitespace. */
@@ -86,7 +89,15 @@ function is(re: RegExp, cp: number | undefined): boolean {
  * Detects invisible and direction-changing Unicode characters, which can hide text
  * from human reviewers while remaining fully readable to a language model.
  */
-export function detectUnicode(text: string): DetectorFinding[] {
+export interface UnicodeOptions {
+  /** Allow a single zero-width space between `@` and a login, as written by trusted bots. */
+  allowMentionBreaks: boolean
+}
+
+export function detectUnicode(
+  text: string,
+  options: UnicodeOptions = { allowMentionBreaks: false }
+): DetectorFinding[] {
   const cps = toCodePoints(text)
   const findings: DetectorFinding[] = []
 
@@ -107,7 +118,7 @@ export function detectUnicode(text: string): DetectorFinding[] {
     const prev = cps[i - 1]?.cp
     const next = cps[end]?.cp
 
-    const finding = evaluateRun(category, run, prev, next, i === 0)
+    const finding = evaluateRun(category, run, prev, next, i === 0, options)
     if (finding) findings.push({ ...finding, index: current.index })
     i = end
   }
@@ -119,7 +130,8 @@ function evaluateRun(
   run: CodePoint[],
   prev: number | undefined,
   next: number | undefined,
-  atStart: boolean
+  atStart: boolean,
+  options: UnicodeOptions
 ): Omit<DetectorFinding, 'index'> | undefined {
   const codes = run.map((c) => c.cp)
   const labels = summarizeCodePoints(codes)
@@ -177,6 +189,7 @@ function evaluateRun(
         if (cp === BOM && atStart) return undefined
         if (cp === ZWJ && isEmojiJoin(prev, next)) return undefined
         if ((cp === ZWJ || cp === ZWNJ) && isScriptJoin(prev, next)) return undefined
+        if (cp === ZWSP && options.allowMentionBreaks && prev === AT && is(LOGIN_CHAR, next)) return undefined
       }
       const onlySoftHyphen = codes.every((cp) => cp === SOFT_HYPHEN)
       const severity: Severity = onlySoftHyphen ? 'low' : codes.length >= 8 ? 'high' : 'medium'
