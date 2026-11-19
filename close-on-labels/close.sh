@@ -86,53 +86,34 @@ fi
 
 rules_file=$(trim "$INPUT_RULES_FILE")
 rules_file=${rules_file#./}
-or_input=$(trim "$INPUT_OR")
-and_input=$(trim "$INPUT_AND")
-not_input=$(trim "$INPUT_NOT")
-
-if [ -z "$rules_file$or_input$and_input$not_input" ]; then
-  fail "No rules. Set or, and, not, or rules-file."
-fi
+[ -n "$rules_file" ] || fail "rules-file is required. Set it to the path of a YAML file with a non-empty rules list."
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Inline inputs form one rule named "inline". Only the inputs that are set become keys.
-jq -n --arg or "$or_input" --arg and "$and_input" --arg not "$not_input" '
-  if $or == "" and $and == "" and $not == "" then null
-  else {name: "inline"}
-    + (if $or == "" then {} else {or: $or} end)
-    + (if $and == "" then {} else {and: $and} end)
-    + (if $not == "" then {} else {not: $not} end)
-  end' > "$work/inline.json"
-
-echo null > "$work/file.json"
-if [ -n "$rules_file" ]; then
-  if [[ "$rules_file" == /* ]]; then local_path=$rules_file; else local_path="$WORKSPACE/$rules_file"; fi
-  if [ -f "$local_path" ]; then
-    cp "$local_path" "$work/rules.yaml"
-  else
-    if ! api_error=$(gh api -H "Accept: application/vnd.github.raw+json" \
-      "repos/$REPO/contents/$rules_file?ref=$SHA" 2>&1 > "$work/rules.yaml"); then
-      fail "Could not read rules-file '$rules_file'. It is not in the workspace, and fetching it from $REPO\
+if [[ "$rules_file" == /* ]]; then local_path=$rules_file; else local_path="$WORKSPACE/$rules_file"; fi
+if [ -f "$local_path" ]; then
+  cp "$local_path" "$work/rules.yaml"
+else
+  if ! api_error=$(gh api -H "Accept: application/vnd.github.raw+json" \
+    "repos/$REPO/contents/$rules_file?ref=$SHA" 2>&1 > "$work/rules.yaml"); then
+    fail "Could not read rules-file '$rules_file'. It is not in the workspace, and fetching it from $REPO\
  at $SHA failed: $api_error. Check the path, and that the token has contents read access."
-    fi
   fi
-  if ! yaml_error=$(yq -o=json '.' < "$work/rules.yaml" 2>&1 > "$work/file.json"); then
-    fail "$rules_file: invalid YAML: $yaml_error"
-  fi
-  [ -s "$work/file.json" ] || echo null > "$work/file.json"
 fi
+if ! yaml_error=$(yq -o=json '.' < "$work/rules.yaml" 2>&1 > "$work/file.json"); then
+  fail "$rules_file: invalid YAML: $yaml_error"
+fi
+[ -s "$work/file.json" ] || echo null > "$work/file.json"
 
 jq -n \
-  --slurpfile inline "$work/inline.json" \
   --slurpfile file "$work/file.json" \
   --arg path "$rules_file" \
   --arg target "$target" \
   --arg reason "$reason" \
   --arg comment "$INPUT_COMMENT" \
   --argjson lock "$lock" \
-  '{inline: $inline[0], file: $file[0], path: $path,
+  '{file: $file[0], path: $path,
     defaults: {target: $target, reason: $reason, comment: $comment, lock: $lock}}' \
   | jq -f "$script_dir/rules.jq" > "$work/rules.json"
 
@@ -176,8 +157,9 @@ else
   if [ "$(jq -r '.rule == null' "$work/match.json")" = true ]; then
     log "No rule applies. $noun #$number stays open."
   else
-    matched_rule=$(jq -r '.rule.name' "$work/match.json")
+    matched_rule=$(jq -r '.rule.id' "$work/match.json")
     matched_labels=$(jq -r '.matched | join(",")' "$work/match.json")
+    rule_context=$(jq -r '.rule | "Rule \(.id | tojson) (index: \(.index))"' "$work/match.json")
 
     if [ "$(jq -r '.rule.kind' "$work/match.json")" = keep ]; then
       result=kept
@@ -186,15 +168,15 @@ else
       result=would-close
       log "Dry run: $noun #$number would be closed. Nothing was changed."
     else
-      # One pass, so a placeholder inside a label or rule name is not replaced again.
+      # One pass, so a placeholder inside a label or rule ID is not replaced again.
       comment=$(jq -r '
         (.matched | map("`\(.)`") | join(", ")) as $m
-        | .rule.name as $n
-        | .rule.comment | split("{{matched}}") | map(split("{{rule}}") | join($n)) | join($m)' "$work/match.json")
+        | .rule.id as $id
+        | .rule.comment | split("{{matched}}") | map(split("{{rule}}") | join($id)) | join($m)' "$work/match.json")
 
       if [ -n "$comment" ]; then
         if ! api_error=$(gh api "repos/$REPO/issues/$number/comments" -f body="$comment" 2>&1 > /dev/null); then
-          fail "Could not comment on #$number, so it was not closed: $api_error"
+          fail "$rule_context: Could not comment on #$number, so it was not closed: $api_error"
         fi
       fi
 
@@ -202,16 +184,16 @@ else
       [ "$kind" = prs ] || close_args+=(-f state_reason="$(jq -r '.rule.reason' "$work/match.json")")
       if ! api_error=$(gh api "${close_args[@]}" 2>&1 > /dev/null); then
         if [ -n "$comment" ]; then
-          fail "Posted the comment but could not close #$number, so it is still open: $api_error"
+          fail "$rule_context: Posted the comment but could not close #$number, so it is still open: $api_error"
         fi
-        fail "Could not close #$number: $api_error"
+        fail "$rule_context: Could not close #$number: $api_error"
       fi
       result=closed closed=true
       log "Closed ${noun,} #$number."
 
       if [ "$(jq -r '.rule.lock' "$work/match.json")" = true ]; then
         if ! api_error=$(gh api -X PUT "repos/$REPO/issues/$number/lock" 2>&1 > /dev/null); then
-          fail "Closed #$number but could not lock it: $api_error"
+          fail "$rule_context: Closed #$number but could not lock it: $api_error"
         fi
         log "Locked ${noun,} #$number."
       fi

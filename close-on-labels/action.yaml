@@ -2,25 +2,9 @@ name: close-on-labels
 description: "Closes an issue or pull request when its labels match an ordered list of rules"
 
 inputs:
-  or:
-    description: "Close when at least one of these labels is present. Labels are separated by commas or newlines."
-    required: false
-    default: ""
-  and:
-    description: "Close when all of these labels are present. Labels are separated by commas or newlines."
-    required: false
-    default: ""
-  not:
-    description: >-
-      Labels that must be absent. With `or` or `and` it limits that rule; on its own it keeps the item open and
-      stops later rules. Labels are separated by commas or newlines.
-    required: false
-    default: ""
   rules-file:
-    description: >-
-      Path to a YAML file with an ordered list of rules. The rule from `or`, `and` and `not` is checked first.
-    required: false
-    default: ""
+    description: "Path to a YAML file with an ordered list of rules."
+    required: true
   target:
     description: "What a rule may act on: `issues`, `prs` or `all`. Default for rules that do not set their own."
     required: false
@@ -57,10 +41,10 @@ outputs:
     description: "`true` if this run closed the item, otherwise `false`."
     value: ${{ steps.close.outputs.closed }}
   result:
-    description: "`closed`, `kept` (a rule with only `not` applied), `would-close` (dry-run) or `none`."
+    description: "`closed`, `kept` (a rule with only `not-labels` applied), `would-close` (dry-run) or `none`."
     value: ${{ steps.close.outputs.result }}
   matched-rule:
-    description: "Name of the rule that applied, or empty."
+    description: "ID of the rule that applied, or empty."
     value: ${{ steps.close.outputs.matched-rule }}
   matched-labels:
     description: "Comma separated labels that made the rule apply, or empty."
@@ -81,9 +65,6 @@ runs:
         WORKSPACE: ${{ github.workspace }}
         EVENT_NAME: ${{ github.event_name }}
         EVENT_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-        INPUT_OR: ${{ inputs.or }}
-        INPUT_AND: ${{ inputs.and }}
-        INPUT_NOT: ${{ inputs.not }}
         INPUT_RULES_FILE: ${{ inputs.rules-file }}
         INPUT_TARGET: ${{ inputs.target }}
         INPUT_COMMENT: ${{ inputs.comment }}

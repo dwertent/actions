@@ -3,16 +3,17 @@
 #
 # Validates and normalizes close-on-labels rules.
 #
-# Input:  {"inline": <rule object or null>, "file": <parsed rules file or null>, "path": <rules-file path or "">,
+# Input:  {"file": <parsed rules file>, "path": <rules-file path>,
 #          "defaults": {"target", "reason", "comment", "lock"}}
 # Output: {"errors": [string], "warnings": [string], "rules": [normalized rule]}
 #
-# A normalized rule is {"name", "kind": "close"|"keep", "or", "and", "not", "target", "reason", "comment", "lock"}.
-# `and`, `or` and `not` are jq keywords, so those keys are always read as .["or"], never .or.
+# A normalized rule has an id, file index (1-based), kind ("close"|"keep"),
+# label lists and action settings.
+# Keys containing hyphens are read with quoted subscripts, for example .["or-labels"].
 
 def trim_ws: gsub("^\\s+|\\s+$"; "");
 
-def allowed_keys: ["name", "or", "and", "not", "target", "reason", "comment", "lock"];
+def allowed_keys: ["id", "or-labels", "and-labels", "not-labels", "target", "reason", "comment", "lock"];
 
 # A list of labels, given as a YAML list or as a comma or newline separated string. null when malformed.
 def label_list:
@@ -26,21 +27,21 @@ def label_list:
 def one_of($allowed):
   if type == "string" then ascii_downcase as $v | if $allowed | index([$v]) then $v else null end else null end;
 
-# check($at; $default_name; $defaults): validates one rule. Returns {"errors": [...], "rule": {...}}.
-def check($at; $default_name; $defaults):
+# check($at; $index; $defaults): validates one rule. Returns {"errors": [...], "rule": {...}}.
+def check($at; $index; $defaults):
   . as $r
+  | " (index: \($index))" as $position
   | if ($r | type) != "object" then
-      {errors: ["\($at) must be a mapping with `or`, `and` or `not`."], rule: null}
+      {errors: ["\($at): Rule\($position) must be a mapping with `id` and `or-labels`, `and-labels` or `not-labels`."],
+       rule: null}
     else
-      ($r.name
-        | if . == null then $default_name
-          elif type == "string" or type == "number" then tostring | trim_ws
-          else null end) as $name
-      | "\($at) (\($name // "?"))" as $where
+      ($r.id | if type == "string" then trim_ws else null end) as $id
+      | ("\($at): Rule" + (if $id == null or $id == "" then "" else " \($id | tojson)" end)
+          + $position) as $where
       | [$r | keys[] | select(. as $k | allowed_keys | index([$k]) | not)] as $unknown
-      | (reduce ("or", "and", "not") as $k ({};
+      | (reduce ("or-labels", "and-labels", "not-labels") as $k ({};
           if $r | has($k) then . + {($k): ($r[$k] | label_list)} else . end)) as $lists
-      | (if ($lists | has("or")) or ($lists | has("and")) then "close" else "keep" end) as $kind
+      | (if ($lists | has("or-labels")) or ($lists | has("and-labels")) then "close" else "keep" end) as $kind
       | ($r.target | one_of(["issues", "prs", "all"])) as $target
       | ($r.reason | one_of(["completed", "not_planned"])) as $reason
       | {
@@ -48,10 +49,12 @@ def check($at; $default_name; $defaults):
             (if ($unknown | length) > 0 then
                ["\($where) has unknown key(s): \($unknown | join(", ")). Allowed: \(allowed_keys | join(", "))."]
              else [] end)
-            + (if $name == null then ["\($where): `name` must be a string."]
-               elif $name == "" then ["\($where): `name` is empty."]
+            + (if ($r | has("id") | not) then
+                 ["\($where): `id` is required. Add a unique, non-empty string ID."]
+               elif $id == null then ["\($where): `id` must be a non-empty string."]
+               elif $id == "" then ["\($where): `id` is empty. Set a unique, non-empty string ID."]
                else [] end)
-            + (if ($lists | length) == 0 then ["\($where) needs `or`, `and` or `not`."] else [] end)
+            + (if ($lists | length) == 0 then ["\($where) needs `or-labels`, `and-labels` or `not-labels`."] else [] end)
             + [$lists | to_entries[]
                 | if .value == null then "\($where): `\(.key)` must be a list of labels."
                   elif (.value | length) == 0 then "\($where): `\(.key)` is empty."
@@ -61,8 +64,8 @@ def check($at; $default_name; $defaults):
                else [] end)
             + (if $kind == "keep" then
                  [("reason", "comment", "lock") as $k | select($r | has($k))
-                  | "\($where): `\($k)` only applies to rules with `or` or `and`."
-                    + " A rule with only `not` keeps items open."]
+                  | "\($where): `\($k)` only applies to rules with `or-labels` or `and-labels`."
+                    + " A rule with only `not-labels` keeps items open."]
                else
                  (if ($r | has("reason")) and $reason == null then
                     ["\($where): `reason` must be one of completed, not_planned (got \($r.reason | tojson))."]
@@ -76,11 +79,12 @@ def check($at; $default_name; $defaults):
                end)
           ),
           rule: {
-            name: $name,
+            id: $id,
+            index: $index,
             kind: $kind,
-            or: ($lists["or"] // []),
-            and: ($lists["and"] // []),
-            not: ($lists["not"] // []),
+            "or-labels": ($lists["or-labels"] // []),
+            "and-labels": ($lists["and-labels"] // []),
+            "not-labels": ($lists["not-labels"] // []),
             target: ($target // $defaults.target),
             reason: ($reason // $defaults.reason),
             comment: (if $r | has("comment") then $r.comment else $defaults.comment end),
@@ -90,32 +94,33 @@ def check($at; $default_name; $defaults):
     end;
 
 . as $in
-| (if $in.inline == null then [] else [$in.inline | check("inputs"; "inline"; $in.defaults)] end) as $inline
-| (if $in.path == "" then
-     {errors: [], checked: []}
-   elif ($in.file | type) != "object" or ($in.file.rules | type) != "array" or ($in.file.rules | length) == 0 then
+| (if ($in.file | type) != "object" or ($in.file.rules | type) != "array" or ($in.file.rules | length) == 0 then
      {errors: ["\($in.path): expected a non-empty `rules` list."], checked: []}
    else
      {errors: [], checked: [$in.file.rules | to_entries[]
-       | .key as $i | .value | check("\($in.path): rules[\($i)]"; "rule-\($i + 1)"; $in.defaults)]}
+       | .key as $i | .value | check($in.path; $i + 1; $in.defaults)]}
    end) as $file
-| ($inline + $file.checked) as $checked
+| $file.checked as $checked
 | [$checked[].rule | select(. != null)] as $rules
-| ([$rules[].name | select(. != null and . != "")] | group_by(.) | map(select(length > 1) | .[0])) as $dupes
+| ($rules | map(select(.id != null and .id != "")) | group_by(.id) | map(select(length > 1))) as $dupes
 | ($file.errors + ($checked | map(.errors) | add // [])) as $rule_errors
 | {
     errors: (
       $rule_errors
-      + [$dupes[] | "Duplicate rule name \"\(.)\". Rule names must be unique."]
+      + [$dupes[] | "Duplicate rule ID \(.[0].id | tojson) at "
+          + (map("\($in.path) (index: \(.index))") | join(", "))
+          + ". Rule IDs must be unique."]
       + (if ($rule_errors | length) == 0 and ([$rules[] | select(.kind == "close")] | length) == 0 then
-           ["No rule can close anything. Add a rule with `or` or `and`; a rule with only `not` only keeps items open."]
+           ["No rule can close anything. Add a rule with `or-labels` or `and-labels`;"
+             + " a rule with only `not-labels` only keeps items open."]
          else [] end)
     ),
     warnings: (
       ([$rules | to_entries[] | select(.value.kind == "close") | .key] | max) as $last_close
       | [$rules | to_entries[]
          | select(.value.kind == "keep" and $last_close != null and .key > $last_close)
-         | "Rule \"\(.value.name)\" only has `not` and comes after every rule that can close,"
+         | "Rule \(.value.id | tojson) (index: \(.value.index))"
+           + " only has `not-labels` and comes after every rule that can close,"
            + " so it never has an effect. Move it above the rules it should protect."]
     ),
     rules: $rules

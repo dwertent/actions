@@ -51,6 +51,11 @@ rules() {
   printf '%s\n' "$1" > "$work/ws/rules.yaml"
 }
 
+# rule <keys> writes a single rule with ID close from YAML flow-mapping entries.
+rule() {
+  rules "rules: [{id: close, $1}]"
+}
+
 failures=0
 passed=0
 failed=0
@@ -93,10 +98,7 @@ run_close() {
     EVENT_NAME=issues \
     EVENT_NUMBER=7 \
     GITHUB_OUTPUT="$work/out" \
-    INPUT_OR= \
-    INPUT_AND= \
-    INPUT_NOT= \
-    INPUT_RULES_FILE= \
+    INPUT_RULES_FILE=rules.yaml \
     INPUT_TARGET=all \
     INPUT_COMMENT= \
     INPUT_CLOSE_REASON=not_planned \
@@ -175,90 +177,99 @@ expect_gh_calls() {
   [ "$calls" -eq "$1" ] || fail "expected $1 gh calls, got $calls"
 }
 
-# --- inline rules -----------------------------------------------------------------------------------------------
+# --- label matching ---------------------------------------------------------------------------------------------
 
-begin "or: one label present closes the issue"
+begin "or-labels: one label present closes the issue"
+rule 'or-labels: "wontfix, invalid"'
 item open issue bug wontfix
-run_close INPUT_OR="wontfix, invalid"
+run_close
 expect_status 0
-expect_result closed true inline wontfix
+expect_result closed true close wontfix
 expect_call "-X PATCH repos/zarf-dev/zarf/issues/7 -f state=closed -f state_reason=not_planned"
 expect_no_call "/comments"
 expect_no_call "/lock"
 
-begin "or: no label present leaves the issue open"
+begin "or-labels: no label present leaves the issue open"
+rule 'or-labels: "wontfix, invalid"'
 item open issue bug
-run_close INPUT_OR="wontfix, invalid"
+run_close
 expect_status 0
 expect_result none false "" ""
 expect_no_writes
 expect_output 'does not apply, none of "wontfix", "invalid" is present.'
 expect_output "No rule applies. Issue #7 stays open."
 
-begin "and: one label missing leaves the issue open"
+begin "and-labels: one label missing leaves the issue open"
+rule 'and-labels: "duplicate\nhas-replacement"'
 item open issue duplicate
-run_close INPUT_AND=$'duplicate\nhas-replacement'
+run_close
 expect_status 0
 expect_result none false "" ""
 expect_no_writes
 expect_output 'missing "has-replacement"'
 
-begin "and: all labels present closes the issue"
+begin "and-labels: all labels present closes the issue"
+rule 'and-labels: "duplicate\nhas-replacement"'
 item open issue has-replacement duplicate
-run_close INPUT_AND=$'duplicate\nhas-replacement' INPUT_CLOSE_REASON=Completed
+run_close INPUT_CLOSE_REASON=Completed
 expect_status 0
-expect_result closed true inline has-replacement,duplicate
+expect_result closed true close has-replacement,duplicate
 expect_call "state_reason=completed"
 
-begin "or + and: both must hold"
+begin "or-labels + and-labels: both must hold"
+rule 'or-labels: [a, b], and-labels: [c, d]'
 item open issue a c
-run_close INPUT_OR="a, b" INPUT_AND="c, d"
+run_close
 expect_result none false "" ""
 item open issue b c d
-run_close INPUT_OR="a, b" INPUT_AND="c, d"
-expect_result closed true inline b,c,d
+run_close
+expect_result closed true close b,c,d
 
-begin "not inside a close rule blocks that rule"
+begin "not-labels inside a close rule blocks that rule"
+rule 'or-labels: [wontfix], not-labels: [keep-open]'
 item open issue wontfix keep-open
-run_close INPUT_OR=wontfix INPUT_NOT=keep-open
+run_close
 expect_status 0
 expect_result none false "" ""
 expect_no_writes
 expect_output 'does not apply, has "keep-open".'
 
-begin "not inside a close rule does not block when absent"
+begin "not-labels inside a close rule does not block when absent"
+rule 'or-labels: [wontfix], not-labels: [keep-open]'
 item open issue wontfix
-run_close INPUT_OR=wontfix INPUT_NOT=keep-open
-expect_result closed true inline wontfix
+run_close
+expect_result closed true close wontfix
 
 begin "labels match case-insensitively and keep the item's casing"
+rule 'or-labels: [wontfix]'
 item open issue "WontFix"
-run_close INPUT_OR="wontfix"
-expect_result closed true inline WontFix
+run_close
+expect_result closed true close WontFix
 
 begin "labels with spaces and punctuation"
+rule 'and-labels: ["good first issue", "kind/bug", "priority: high", "a (b)"]'
 item open issue "good first issue" "kind/bug" "priority: high" "a (b)"
-run_close INPUT_AND="good first issue, kind/bug, priority: high, a (b)"
-expect_result closed true inline "good first issue,kind/bug,priority: high,a (b)"
+run_close
+expect_result closed true close "good first issue,kind/bug,priority: high,a (b)"
 
 # --- order ------------------------------------------------------------------------------------------------------
 
 rules '
 rules: # checked in order, the first rule that applies decides
-  - name: keep
-    not: [keep-open]
-  - name: close if one
-    or: [wontfix, invalid, duplicate]
-  - name: close if all
-    and: [duplicate, has-replacement]'
+  - id: keep
+    not-labels: [keep-open]
+  - id: close if one
+    or-labels: [wontfix, invalid, duplicate]
+  - id: close if all
+    and-labels: [duplicate, has-replacement]'
 
 begin "order: wontfix is closed by the first close rule"
 item open issue wontfix
 run_close INPUT_RULES_FILE=rules.yaml
 expect_status 0
 expect_result closed true "close if one" wontfix
-expect_output 'Rule "keep": does not apply, none of "keep-open" is present.'
-expect_output 'Rule "close if one": applies ("wontfix").'
+expect_output 'Rule "keep" (index: 1): does not apply, none of "keep-open" is present.'
+expect_output 'Rule "close if one" (index: 2): applies ("wontfix").'
 expect_output "The 1 rule(s) after it were not checked."
 expect_no_output 'Rule "close if all"'
 
@@ -268,7 +279,7 @@ run_close INPUT_RULES_FILE=rules.yaml
 expect_status 0
 expect_result kept false keep keep-open
 expect_no_writes
-expect_output 'Rule "keep": applies (has "keep-open"), keeping the item open.'
+expect_output 'Rule "keep" (index: 1): applies (has "keep-open"), keeping the item open.'
 expect_output "The 2 rule(s) after it were not checked."
 expect_no_output 'Rule "close if one"'
 
@@ -282,59 +293,61 @@ item open issue has-replacement
 run_close INPUT_RULES_FILE=rules.yaml
 expect_result none false "" ""
 expect_no_writes
-expect_output 'Rule "close if all": does not apply, missing "duplicate".'
+expect_output 'Rule "close if all" (index: 3): does not apply, missing "duplicate".'
 
 begin "order: the same rules with keep last close the item and warn"
 rules '
 rules:
-  - name: close if one
-    or: [wontfix, invalid, duplicate]
-  - name: close if all
-    and: [duplicate, has-replacement]
-  - name: keep
-    not: [keep-open]'
+  - id: close if one
+    or-labels: [wontfix, invalid, duplicate]
+  - id: close if all
+    and-labels: [duplicate, has-replacement]
+  - id: keep
+    not-labels: [keep-open]'
 item open issue wontfix keep-open
 run_close INPUT_RULES_FILE=rules.yaml
 expect_status 0
 expect_result closed true "close if one" wontfix
-expect_output '::warning title=close-on-labels::Rule "keep" only has `not` and comes after every rule that can close'
+expect_output '::warning title=close-on-labels::Rule "keep" (index: 3) only has `not-labels` and comes after every rule that can close'
 
-begin "order: inline rule is checked before file rules"
-rules '
-rules:
-  - name: from-file
-    or: [wontfix]'
+begin "removed inline inputs cannot add a close rule before file rules"
+rule 'or-labels: [other]'
 item open issue wontfix
 run_close INPUT_RULES_FILE=rules.yaml INPUT_OR=wontfix
-expect_result closed true inline wontfix
+expect_status 0
+expect_result none false "" ""
+expect_no_writes
 
-begin "order: an inline keep rule protects from file rules"
+begin "removed inline not input cannot override a file rule"
+rule 'or-labels: [wontfix]'
 item open issue wontfix keep-open
 run_close INPUT_RULES_FILE=rules.yaml INPUT_NOT=keep-open
-expect_result kept false inline keep-open
-expect_no_writes
+expect_status 0
+expect_result closed true close wontfix
 
 # --- target -----------------------------------------------------------------------------------------------------
 
 begin "target: a close rule for prs skips an issue"
+rule 'or-labels: [wontfix]'
 item open issue wontfix
-run_close INPUT_OR=wontfix INPUT_TARGET=prs
+run_close INPUT_TARGET=prs
 expect_result none false "" ""
-expect_output 'Rule "inline": skipped, it only applies to pull requests.'
+expect_output 'Rule "close" (index: 1): skipped, it only applies to pull requests.'
 
 begin "target: a close rule for issues skips a pull request"
+rule 'or-labels: [wontfix]'
 item open pr wontfix
-run_close INPUT_OR=wontfix INPUT_TARGET=issues
+run_close INPUT_TARGET=issues
 expect_result none false "" ""
 
 begin "target: a keep rule for prs does not protect an issue"
 rules '
 rules:
-  - name: keep prs
-    not: [keep-open]
+  - id: keep prs
+    not-labels: [keep-open]
     target: prs
-  - name: close
-    or: [wontfix]'
+  - id: close
+    or-labels: [wontfix]'
 item open issue wontfix keep-open
 run_close INPUT_RULES_FILE=rules.yaml
 expect_result closed true close wontfix
@@ -347,29 +360,31 @@ expect_result kept false "keep prs" keep-open
 # --- pull requests, comment, lock -------------------------------------------------------------------------------
 
 begin "pull request is closed without a state reason"
+rule 'or-labels: [wontfix]'
 item open pr wontfix
-run_close INPUT_OR=wontfix
-expect_result closed true inline wontfix
+run_close
+expect_result closed true close wontfix
 expect_call "-X PATCH repos/zarf-dev/zarf/issues/7 -f state=closed"
 expect_no_call "state_reason"
 expect_output "Closed pull request #7."
 
 begin "comment, close and lock happen in that order"
+rule 'or-labels: [wontfix, invalid]'
 item open issue invalid wontfix
-run_close INPUT_OR="wontfix, invalid" INPUT_LOCK=TRUE \
+run_close INPUT_LOCK=TRUE \
   INPUT_COMMENT='Closed by {{rule}}: {{matched}}. ({{rule}})'
 expect_status 0
-expect_result closed true inline invalid,wontfix
+expect_result closed true close invalid,wontfix
 order=$(grep -oE '/comments|-X PATCH|-X PUT' "$work/calls" | tr '\n' ' ')
 [ "$order" = "/comments -X PATCH -X PUT " ] || fail "expected comment, close, lock; got: $order"
-expect_call 'body=Closed by inline: `invalid`, `wontfix`. (inline)'
+expect_call 'body=Closed by close: `invalid`, `wontfix`. (close)'
 expect_call "-X PUT repos/zarf-dev/zarf/issues/7/lock"
 
-begin "placeholders are replaced once, not inside label or rule names"
+begin "placeholders are replaced once, not inside label or rule IDs"
 rules '
 rules:
-  - name: "{{matched}}"
-    or: ["{{rule}}"]
+  - id: "{{matched}}"
+    or-labels: ["{{rule}}"]
     comment: "{{rule}} / {{matched}}"'
 item open issue "{{rule}}"
 run_close INPUT_RULES_FILE=rules.yaml
@@ -378,10 +393,10 @@ expect_call 'body={{matched}} / `{{rule}}`'
 begin "file rules take input defaults and can override them"
 rules '
 rules:
-  - name: defaults
-    or: [a]
-  - name: overrides
-    or: [b]
+  - id: defaults
+    or-labels: [a]
+  - id: overrides
+    or-labels: [b]
     reason: completed
     comment: ""
     lock: false'
@@ -400,9 +415,9 @@ expect_call "state_reason=completed"
 begin "rule lists may be comma separated strings"
 rules '
 rules:
-  - name: csv
-    or: "wontfix, invalid"
-    not: keep-open'
+  - id: csv
+    or-labels: "wontfix, invalid"
+    not-labels: keep-open'
 item open issue invalid
 run_close INPUT_RULES_FILE=rules.yaml
 expect_result closed true csv invalid
@@ -410,30 +425,39 @@ expect_result closed true csv invalid
 # --- dry run, closed items, numbers -----------------------------------------------------------------------------
 
 begin "dry-run reports the match without changing anything"
+rule 'or-labels: [wontfix]'
 item open issue wontfix
-run_close INPUT_OR=wontfix INPUT_DRY_RUN=true INPUT_COMMENT=bye INPUT_LOCK=true
+run_close INPUT_DRY_RUN=true INPUT_COMMENT=bye INPUT_LOCK=true
 expect_status 0
-expect_result would-close false inline wontfix
+expect_result would-close false close wontfix
 expect_no_writes
 expect_output "Dry run: Issue #7 would be closed. Nothing was changed."
 
 begin "dry-run with a keep rule reports kept"
+rules '
+rules:
+  - id: keep
+    not-labels: [keep-open]
+  - id: close
+    or-labels: [wontfix]'
 item open issue keep-open wontfix
-run_close INPUT_NOT=keep-open INPUT_RULES_FILE=rules.yaml INPUT_DRY_RUN=true
-expect_result kept false inline keep-open
+run_close INPUT_RULES_FILE=rules.yaml INPUT_DRY_RUN=true
+expect_result kept false keep keep-open
 
 begin "an item that is already closed is skipped"
+rule 'or-labels: [wontfix]'
 item closed issue wontfix
-run_close INPUT_OR=wontfix
+run_close
 expect_status 0
 expect_result none false "" ""
 expect_no_writes
 expect_output "Issue #7 is closed. Nothing to do."
 
 begin "number input overrides the event"
+rule 'or-labels: [wontfix]'
 item open issue wontfix
-run_close INPUT_OR=wontfix INPUT_NUMBER=" 42 "
-expect_result closed true inline wontfix 42
+run_close INPUT_NUMBER=" 42 "
+expect_result closed true close wontfix 42
 expect_call "api repos/zarf-dev/zarf/issues/42"
 
 # --- rules file location ----------------------------------------------------------------------------------------
@@ -441,14 +465,15 @@ expect_call "api repos/zarf-dev/zarf/issues/42"
 begin "rules file is read from the workspace with a ./ prefix"
 rules '
 rules:
-  - or: [wontfix]'
+  - id: local
+    or-labels: [wontfix]'
 item open issue wontfix
 run_close INPUT_RULES_FILE=./rules.yaml
-expect_result closed true rule-1 wontfix
+expect_result closed true local wontfix
 expect_no_call "/contents/"
 
 begin "rules file missing from the workspace is fetched from the repository"
-printf 'rules:\n  - name: remote\n    or: [wontfix]\n' > "$work/remote.yaml"
+printf 'rules:\n  - id: remote\n    or-labels: [wontfix]\n' > "$work/remote.yaml"
 item open issue wontfix
 run_close INPUT_RULES_FILE=.github/close-rules.yaml FAKE_GH_CONTENT="$work/remote.yaml"
 expect_status 0
@@ -479,57 +504,100 @@ invalid_rules() {
 invalid_rules "missing rules list" 'other: 1' 'rules.yaml: expected a non-empty `rules` list.'
 invalid_rules "empty rules list" 'rules: []' 'rules.yaml: expected a non-empty `rules` list.'
 invalid_rules "empty file" '' 'rules.yaml: expected a non-empty `rules` list.'
-invalid_rules "rule is not a mapping" $'rules:\n  - wontfix' 'rules.yaml: rules[0] must be a mapping'
-invalid_rules "unknown key" $'rules:\n  - or: [a]\n    labels: [b]' \
-  'rules.yaml: rules[0] (rule-1) has unknown key(s): labels.'
-invalid_rules "no or, and or not" $'rules:\n  - name: x' 'rules.yaml: rules[0] (x) needs `or`, `and` or `not`.'
-invalid_rules "empty list" $'rules:\n  - or: []' 'rules.yaml: rules[0] (rule-1): `or` is empty.'
-invalid_rules "list of mappings" $'rules:\n  - or: [{a: 1}]' \
-  'rules.yaml: rules[0] (rule-1): `or` must be a list of labels.'
-invalid_rules "empty name" $'rules:\n  - name: " "\n    or: [a]' 'rules.yaml: rules[0] (): `name` is empty.'
-invalid_rules "name is a list" $'rules:\n  - name: [a]\n    or: [a]' \
-  'rules.yaml: rules[0] (?): `name` must be a string.'
-invalid_rules "duplicate names" $'rules:\n  - {name: x, or: [a]}\n  - {name: x, or: [b]}' \
-  'Duplicate rule name "x".'
-invalid_rules "bad target" $'rules:\n  - or: [a]\n    target: both' \
-  'rules.yaml: rules[0] (rule-1): `target` must be one of issues, prs, all (got "both").'
-invalid_rules "bad reason" $'rules:\n  - or: [a]\n    reason: spam' \
-  'rules.yaml: rules[0] (rule-1): `reason` must be one of completed, not_planned (got "spam").'
-invalid_rules "comment not a string" $'rules:\n  - or: [a]\n    comment: [x]' \
-  'rules.yaml: rules[0] (rule-1): `comment` must be a string.'
-invalid_rules "lock not a boolean" $'rules:\n  - or: [a]\n    lock: "yes"' \
-  'rules.yaml: rules[0] (rule-1): `lock` must be true or false (got "yes").'
-invalid_rules "comment on a keep rule" $'rules:\n  - not: [a]\n    comment: x\n  - or: [b]' \
-  'rules.yaml: rules[0] (rule-1): `comment` only applies to rules with `or` or `and`.'
-invalid_rules "only keep rules" $'rules:\n  - not: [keep-open]' 'No rule can close anything.'
+invalid_rules "rule is not a mapping" $'rules:\n  - wontfix' \
+  'rules.yaml: Rule (index: 1) must be a mapping'
+invalid_rules "unknown key" $'rules:\n  - id: x\n    or-labels: [a]\n    labels: [b]' \
+  'rules.yaml: Rule "x" (index: 1) has unknown key(s): labels.'
+invalid_rules "legacy name key" $'rules:\n  - id: x\n    name: old\n    or-labels: [a]' \
+  'rules.yaml: Rule "x" (index: 1) has unknown key(s): name.'
+for legacy_key in or and not; do
+  invalid_rules "legacy label key $legacy_key" "rules: [{id: legacy, $legacy_key: [wontfix]}]" \
+    "rules.yaml: Rule \"legacy\" (index: 1) has unknown key(s): $legacy_key."
+  expect_output 'Allowed: id, or-labels, and-labels, not-labels, target, reason, comment, lock.'
+
+  invalid_rules "mixed legacy label key $legacy_key" \
+    "rules: [{id: legacy, or-labels: [wontfix], $legacy_key: [keep-open]}]" \
+    "rules.yaml: Rule \"legacy\" (index: 1) has unknown key(s): $legacy_key."
+  expect_output 'Allowed: id, or-labels, and-labels, not-labels, target, reason, comment, lock.'
+done
+invalid_rules "no label conditions" $'rules:\n  - id: x' \
+  'rules.yaml: Rule "x" (index: 1) needs `or-labels`, `and-labels` or `not-labels`.'
+invalid_rules "empty list" $'rules:\n  - id: x\n    or-labels: []' 'rules.yaml: Rule "x" (index: 1): `or-labels` is empty.'
+invalid_rules "list of mappings" $'rules:\n  - id: x\n    or-labels: [{a: 1}]' \
+  'rules.yaml: Rule "x" (index: 1): `or-labels` must be a list of labels.'
+invalid_rules "missing ID" $'rules:\n  - or-labels: [a]' \
+  'rules.yaml: Rule (index: 1): `id` is required. Add a unique, non-empty string ID.'
+invalid_rules "missing ID after a matching rule" $'rules:\n  - {id: first, or-labels: [wontfix]}\n  - or-labels: [b]' \
+  'rules.yaml: Rule (index: 2): `id` is required.'
+invalid_rules "empty ID" $'rules:\n  - id: ""\n    or-labels: [a]' 'rules.yaml: Rule (index: 1): `id` is empty.'
+invalid_rules "whitespace ID" $'rules:\n  - id: " "\n    or-labels: [a]' 'rules.yaml: Rule (index: 1): `id` is empty.'
+for invalid_id in null 123 true '[a]' '{a: 1}'; do
+  invalid_rules "ID is $invalid_id" "rules: [{id: $invalid_id, or-labels: [a]}]" \
+    'rules.yaml: Rule (index: 1): `id` must be a non-empty string.'
+done
+invalid_rules "duplicate IDs" $'rules:\n  - {id: x, or-labels: [a]}\n  - {id: x, or-labels: [b]}' \
+  'Duplicate rule ID "x" at rules.yaml (index: 1), rules.yaml (index: 2). Rule IDs must be unique.'
+invalid_rules "duplicate IDs after trimming" $'rules:\n  - {id: " x ", or-labels: [a]}\n  - {id: x, or-labels: [b]}' \
+  'Duplicate rule ID "x" at rules.yaml (index: 1), rules.yaml (index: 2).'
+invalid_rules "bad target" $'rules:\n  - id: x\n    or-labels: [a]\n    target: both' \
+  'rules.yaml: Rule "x" (index: 1): `target` must be one of issues, prs, all (got "both").'
+invalid_rules "bad reason" $'rules:\n  - id: x\n    or-labels: [a]\n    reason: spam' \
+  'rules.yaml: Rule "x" (index: 1): `reason` must be one of completed, not_planned (got "spam").'
+invalid_rules "comment not a string" $'rules:\n  - id: x\n    or-labels: [a]\n    comment: [x]' \
+  'rules.yaml: Rule "x" (index: 1): `comment` must be a string.'
+invalid_rules "lock not a boolean" $'rules:\n  - id: x\n    or-labels: [a]\n    lock: "yes"' \
+  'rules.yaml: Rule "x" (index: 1): `lock` must be true or false (got "yes").'
+invalid_rules "comment on a keep rule" $'rules:\n  - id: keep\n    not-labels: [a]\n    comment: x\n  - id: close\n    or-labels: [b]' \
+  'rules.yaml: Rule "keep" (index: 1): `comment` only applies to rules with `or-labels` or `and-labels`.'
+invalid_rules "only keep rules" $'rules:\n  - id: keep\n    not-labels: [keep-open]' 'No rule can close anything.'
+
+begin "the former inline ID is available to file rules"
+rules 'rules: [{id: inline, or-labels: [wontfix]}]'
+item open issue wontfix
+run_close INPUT_RULES_FILE=rules.yaml
+expect_status 0
+expect_result closed true inline wontfix
+expect_output 'Rule "inline" (index: 1): applies'
+
+begin "rule IDs are trimmed for logs, outputs and comments"
+rules 'rules: [{id: " rejected ", or-labels: [wontfix], comment: "Closed by {{rule}}"}]'
+run_close INPUT_RULES_FILE=rules.yaml
+expect_status 0
+expect_result closed true rejected wontfix
+expect_output 'Rule "rejected" (index: 1): applies'
+expect_call 'body=Closed by rejected'
 
 begin "invalid rules: invalid YAML"
 rules 'rules: ['
 run_close INPUT_RULES_FILE=rules.yaml
 expect_status 1
 expect_output "rules.yaml: invalid YAML:"
-expect_output "line 2"
+[[ "$output" == *"line 2"* || "$output" == *"L2.C1"* ]] || fail "expected YAML error to identify line 2"
 expect_no_output "$work"
 expect_gh_calls 0
 
-begin "invalid inputs: only not, and no rules file"
-item open issue wontfix
-run_close INPUT_NOT=keep-open
-expect_status 1
-expect_output "No rule can close anything."
-expect_gh_calls 0
+for path in "" " " ./; do
+  begin "invalid inputs: rules-file '$path' has no path"
+  run_close INPUT_RULES_FILE="$path"
+  expect_status 1
+  expect_output "rules-file is required. Set it to the path of a YAML file with a non-empty rules list."
+  expect_gh_calls 0
+done
 
-begin "invalid inputs: no rules at all"
-run_close
-expect_status 1
-expect_output "No rules. Set or, and, not, or rules-file."
-expect_gh_calls 0
+for legacy_input in INPUT_OR=wontfix INPUT_AND=wontfix INPUT_NOT=keep-open; do
+  begin "removed inline input cannot replace required rules-file: $legacy_input"
+  item open issue wontfix
+  run_close INPUT_RULES_FILE= "$legacy_input"
+  expect_status 1
+  expect_output "rules-file is required."
+  expect_gh_calls 0
+done
 
 # invalid_input <VAR=value> <expected error>
 invalid_input() {
   begin "invalid input: $1"
   item open issue wontfix
-  run_close INPUT_OR=wontfix "$1"
+  run_close "$1"
   expect_status 1
   expect_output "$2"
   expect_gh_calls 0
@@ -543,7 +611,7 @@ invalid_input INPUT_NUMBER=abc "number must be a positive whole number. Got 'abc
 invalid_input INPUT_NUMBER=0 "number must be a positive whole number. Got '0'."
 
 begin "no number in the event and no number input"
-run_close INPUT_OR=wontfix EVENT_NUMBER= EVENT_NAME=schedule
+run_close EVENT_NUMBER= EVENT_NAME=schedule
 expect_status 1
 expect_output "The 'schedule' event has no issue or pull request. Set the number input."
 expect_gh_calls 0
@@ -551,39 +619,116 @@ expect_gh_calls 0
 # --- API failures -----------------------------------------------------------------------------------------------
 
 begin "failure reading the item"
+rule 'or-labels: [wontfix]'
 item open issue wontfix
-run_close INPUT_OR=wontfix FAKE_GH_FAIL_ON="issues/7"
+run_close FAKE_GH_FAIL_ON="issues/7"
 expect_status 1
 expect_output "Could not read #7 in zarf-dev/zarf: HTTP 500: fake failure"
 expect_no_writes
 
 begin "failure posting the comment does not close"
-run_close INPUT_OR=wontfix INPUT_COMMENT=bye FAKE_GH_FAIL_ON="/comments"
+run_close INPUT_COMMENT=bye FAKE_GH_FAIL_ON="/comments"
 expect_status 1
 expect_output "Could not comment on #7, so it was not closed"
+expect_output '::error title=close-on-labels::Rule "close" (index: 1): Could not comment'
 expect_no_call "-X PATCH"
 
 begin "failure closing after the comment says the item is still open"
-run_close INPUT_OR=wontfix INPUT_COMMENT=bye FAKE_GH_FAIL_ON="-X PATCH"
+run_close INPUT_COMMENT=bye FAKE_GH_FAIL_ON="-X PATCH"
 expect_status 1
 expect_output "Posted the comment but could not close #7, so it is still open"
+expect_output '::error title=close-on-labels::Rule "close" (index: 1): Posted the comment but could not close'
+
+begin "failure closing without a comment identifies the rule"
+run_close FAKE_GH_FAIL_ON="-X PATCH"
+expect_status 1
+expect_output '::error title=close-on-labels::Rule "close" (index: 1): Could not close #7'
 
 begin "failure locking"
-run_close INPUT_OR=wontfix INPUT_LOCK=true FAKE_GH_FAIL_ON="-X PUT"
+run_close INPUT_LOCK=true FAKE_GH_FAIL_ON="-X PUT"
 expect_status 1
 expect_output "Closed #7 but could not lock it"
+expect_output '::error title=close-on-labels::Rule "close" (index: 1): Closed #7 but could not lock it'
+
+rules '
+rules:
+  - id: unmatched
+    or-labels: [other]
+  - id: rejected
+    or-labels: [wontfix]'
+for operation in comment close lock; do
+  begin "failure in file rule: $operation identifies the ID and file index"
+  case "$operation" in
+    comment) fail_on=/comments ;;
+    close) fail_on="-X PATCH" ;;
+    lock) fail_on="-X PUT" ;;
+  esac
+  run_close INPUT_RULES_FILE=rules.yaml INPUT_COMMENT=bye INPUT_LOCK=true \
+    FAKE_GH_FAIL_ON="$fail_on"
+  expect_status 1
+  expect_output '::error title=close-on-labels::Rule "rejected" (index: 2):'
+done
 
 # --- escaping ---------------------------------------------------------------------------------------------------
 
 begin "workflow command values are escaped"
 rules '
 rules:
-  - or: [a]
-  - name: "100% kept"
-    not: [b]'
+  - id: close
+    or-labels: [a]
+  - id: "100% kept"
+    not-labels: [b]'
 item open issue x
 run_close INPUT_RULES_FILE=rules.yaml
-expect_output 'Rule "100%25 kept" only has `not`'
+expect_output 'Rule "100%25 kept" (index: 2) only has `not-labels`'
+
+begin "rule IDs cannot inject workflow commands into logs or errors"
+rules '
+rules:
+  - id: "100%\n::error::forged"
+    or-labels: [wontfix]'
+item open issue wontfix
+run_close INPUT_RULES_FILE=rules.yaml FAKE_GH_FAIL_ON="-X PATCH"
+expect_status 1
+expect_output 'Rule "100%\n::error::forged" (index: 1): applies'
+expect_output '::error title=close-on-labels::Rule "100%25\n::error::forged" (index: 1): Could not close'
+expect_no_output $'\n::error::forged'
+
+# --- README example ---------------------------------------------------------------------------------------------
+
+rules "$(awk '
+  $0 == "# .github/close-rules.yaml" { reading = 1; next }
+  reading && $0 == "```" { exit }
+  reading { print }
+' "$script_dir/README.md")"
+
+for kind in issue pr; do
+  begin "README example: $kind with wontfix closes by rejected"
+  item open "$kind" wontfix
+  run_close INPUT_RULES_FILE=rules.yaml
+  expect_status 0
+  expect_result closed true rejected wontfix
+
+  begin "README example: $kind with keep-open is protected"
+  item open "$kind" wontfix keep-open
+  run_close INPUT_RULES_FILE=rules.yaml
+  expect_status 0
+  expect_result kept false keep keep-open
+  expect_no_writes
+
+  begin "README example: $kind with duplicate uses the earlier close rule"
+  item open "$kind" duplicate has-replacement
+  run_close INPUT_RULES_FILE=rules.yaml
+  expect_status 0
+  expect_result closed true rejected duplicate
+
+  begin "README example: $kind without a matching rule stays open"
+  item open "$kind" has-replacement
+  run_close INPUT_RULES_FILE=rules.yaml
+  expect_status 0
+  expect_result none false "" ""
+  expect_no_writes
+done
 
 # --- this repository's own rules ---------------------------------------------------------------------------------
 
@@ -616,6 +761,10 @@ expect_no_writes
 begin "action.yaml passed all checks"
 output=""
 manifest="$script_dir/action.yaml"
+[ "$(yq '.inputs.rules-file.required' "$manifest")" = true ] || fail "rules-file must be required"
+for input in or and not; do
+  [ "$(yq ".inputs | has(\"$input\")" "$manifest")" = false ] || fail "inline input $input must be removed"
+done
 for input in $(yq '.inputs | keys | .[]' "$manifest"); do
   [ "$input" = token ] && continue
   var="INPUT_$(tr 'a-z-' 'A-Z_' <<< "$input")"
