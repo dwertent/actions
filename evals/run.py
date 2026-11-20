@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026-Present The Zarf Authors
 
 import argparse
+import asyncio
 from copy import deepcopy
 from difflib import unified_diff
 import json
@@ -14,6 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import yaml
+from nemo_evaluator import EvalEnvironment, SeedResult, SolveResult, VerifyResult, run_evaluation
+from nemo_evaluator.engine import write_all
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,7 +95,7 @@ def load_cases():
     return cases
 
 
-def make_request(case, model, with_skill):
+def seed_case(case, with_skill):
     instructions = "\n\n".join((ROOT / path).read_text() for path in ("AGENTS.md", "CONTRIBUTING.md"))
     if with_skill:
         instructions += "\n\n" + case["skill_text"]
@@ -125,15 +128,12 @@ def make_request(case, model, with_skill):
                 'and "pr_title" containing the suggested title. Work from the supplied files.'
             ),
         }
-    return {
-        "model": model,
-        "instructions": instructions,
-        "input": json.dumps(task),
-        "text": {"format": {"type": "json_object"}},
-        "reasoning": {"effort": "low"},
-        "max_output_tokens": 4096,
-        "store": False,
-    }
+    return SeedResult(
+        prompt=json.dumps(task),
+        system=instructions,
+        expected_answer=case["id"],
+        metadata={"case_id": case["id"], "category": case["skill"]},
+    )
 
 
 def grade_review(expected, findings):
@@ -224,7 +224,39 @@ def grade(case, response):
     }
 
 
-def request_response(payload, key):
+class SkillBenchmark(EvalEnvironment):
+    name = "actions-skills"
+
+    def __init__(self, with_skill):
+        super().__init__()
+        self.dataset = load_cases()
+        self.cases = {case["id"]: case for case in self.dataset}
+        self.with_skill = with_skill
+
+    async def seed(self, idx):
+        return seed_case(self.dataset[idx], with_skill=self.with_skill)
+
+    async def verify(self, response, expected, **metadata):
+        try:
+            checks = grade(self.cases[expected], json.loads(response))
+        except (ValueError, yaml.YAMLError):
+            return VerifyResult(
+                reward=0.0,
+                scoring_details={"status": "execution_error", "error": "invalid model response"},
+            )
+        return VerifyResult(reward=float(all(checks.values())), scoring_details={"checks": checks})
+
+
+def request_response(task, model, key):
+    payload = {
+        "model": model,
+        "instructions": task.system,
+        "input": task.prompt,
+        "text": {"format": {"type": "json_object"}},
+        "reasoning": {"effort": "low"},
+        "max_output_tokens": 4096,
+        "store": False,
+    }
     request = Request(
         "https://api.openai.com/v1/responses",
         data=json.dumps(payload).encode(),
@@ -242,7 +274,7 @@ def request_response(payload, key):
     ]
     if len(texts) != 1:
         raise ValueError("Expected exactly one model response, with no refusal")
-    return json.loads(texts[0])
+    return texts[0]
 
 
 def describe_http_error(error):
@@ -264,9 +296,34 @@ def describe_http_error(error):
     return "model API HTTP 429, rate limit or quota. Check API usage and billing before rerunning.", False
 
 
+class ResponsesSolver:
+    """Send a NeMo task to the OpenAI Responses API."""
+
+    def __init__(self, model, key):
+        self.model = model
+        self.key = key
+        self.quota_blocked = False
+
+    async def solve(self, task):
+        if self.quota_blocked:
+            return SolveResult(response="", reward=0.0, scoring_details={"status": "skipped"})
+        try:
+            response = await asyncio.to_thread(request_response, task, self.model, self.key)
+        except HTTPError as error:
+            detail, self.quota_blocked = describe_http_error(error)
+        except (URLError, TimeoutError, ValueError, KeyError, TypeError):
+            detail = "unavailable or invalid model response"
+        else:
+            return SolveResult(response=response)
+        return SolveResult(
+            response="", reward=0.0, scoring_details={"status": "execution_error", "error": detail}
+        )
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate the repository's GitHub Actions skills.")
+    parser = argparse.ArgumentParser(description="Evaluate GitHub Actions skills with NVIDIA NeMo Evaluator.")
     parser.add_argument("--model", default=MODEL)
+    parser.add_argument("--output-dir", type=Path, help="Write NeMo reports to this directory.")
     parser.add_argument(
         "--without-skills", action="store_true", help="Run a matched baseline without loading the target skill."
     )
@@ -275,32 +332,39 @@ def main():
     if not key:
         parser.exit(2, "Set OPENAI_API_KEY to run the live skill evals. See evals/README.md.\n")
 
-    cases = load_cases()
-    print(f"Model {args.model} | checkout {git('rev-parse', 'HEAD').strip()} | with skills: {not args.without_skills}")
-    failed, errors, skipped = 0, 0, 0
-    for index, case in enumerate(cases):
-        try:
-            payload = make_request(case, args.model, with_skill=not args.without_skills)
-            checks = grade(case, request_response(payload, key))
-        except HTTPError as error:
-            detail, quota_blocked = describe_http_error(error)
-            print(f"{case['id']}: execution error ({detail})")
-            errors += 1
-            if quota_blocked:
-                skipped = len(cases) - index - 1
-                break
-            continue
-        except (URLError, TimeoutError, ValueError, KeyError, TypeError, yaml.YAMLError):
-            print(f"{case['id']}: execution error (unavailable or invalid model response)")
-            errors += 1
-            continue
+    config = {
+        "model": args.model,
+        "checkout": git("rev-parse", "HEAD").strip(),
+        "with_skills": not args.without_skills,
+    }
+    benchmark = SkillBenchmark(with_skill=config["with_skills"])
+    print(f"Model {config['model']} | checkout {config['checkout']} | with skills: {config['with_skills']}")
+    bundle = asyncio.run(run_evaluation(
+        benchmark, ResponsesSolver(args.model, key), config=config, max_concurrent=1, max_system_retries=1,
+    ))
+    if args.output_dir is not None:
+        write_all(bundle, args.output_dir)
 
-        for check, passed in checks.items():
-            print(f"{case['id']}: {'PASS' if passed else 'FAIL'} {check}")
-        failed += not all(checks.values())
-    passed = len(cases) - failed - errors - skipped
-    print(f"{passed}/{len(cases)} cases passed, {failed} failed, {errors} execution errors, {skipped} skipped")
-    return 2 if errors else int(failed > 0)
+    results = bundle["_results"]
+    if {result["metadata"]["case_id"] for result in results} != benchmark.cases.keys():
+        print("Execution error: NeMo returned an incomplete set of case results.")
+        return 2
+    failed, errors, skipped = 0, 0, 0
+    for result in sorted(results, key=lambda row: row["problem_idx"]):
+        case_id = result["metadata"]["case_id"]
+        details = result["scoring_details"]
+        if details.get("status") == "skipped":
+            skipped += 1
+        elif "error" in details:
+            print(f"{case_id}: execution error ({details['error']})")
+            errors += 1
+        else:
+            for check, passed in details["checks"].items():
+                print(f"{case_id}: {'PASS' if passed else 'FAIL'} {check}")
+            failed += result["reward"] != 1.0
+    passed = len(results) - failed - errors - skipped
+    print(f"{passed}/{len(results)} cases passed, {failed} failed, {errors} execution errors, {skipped} skipped")
+    return 2 if errors or skipped else int(failed > 0)
 
 
 if __name__ == "__main__":

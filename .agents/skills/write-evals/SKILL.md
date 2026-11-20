@@ -18,7 +18,8 @@ Update the affected skill and its eval cases together. Use the changed inputs, o
 rule IDs to find cases that need attention. Add coverage for new expectations, revise affected
 fixtures and assertions, and remove cases that only cover retired expectations. Keep cases that
 protect supported behavior, even when an implementation changes. Use the [eval runbook](../../../evals/README.md)
-to check fixtures and graders locally and run the live suite when credentials are available.
+to run the offline checks and NVIDIA NeMo Evaluator suite. Keep model access in the Responses adapter, fixtures
+in the case registry, and assertions in the deterministic graders.
 
 ## Write cases
 
