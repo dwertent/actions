@@ -1,6 +1,6 @@
 # close-on-labels
 
-Closes an issue or pull request when its labels match a rule in a YAML rules file. Rules use `or-labels`, `and-labels`
+Closes an issue or pull request when its labels match a rule in a YAML rules file. Rules use `any-labels`, `all-labels`
 and `not-labels` lists and are checked in order: **the first rule that applies decides, and no later rule is looked at.**
 
 ## Usage
@@ -33,10 +33,10 @@ rules: # checked in order, the first rule that applies decides
   - id: keep
     not-labels: [keep-open]
   - id: rejected
-    or-labels: [wontfix, invalid, duplicate]
+    any-labels: [wontfix, invalid, duplicate]
     comment: "Closing because this was labeled {{matched}}."
   - id: superseded
-    and-labels: [duplicate, has-replacement]
+    all-labels: [duplicate, has-replacement]
     target: prs
 ```
 
@@ -73,8 +73,8 @@ the rule by ID and file index when available.
 
 | Key | Meaning |
 | --- | --- |
-| `or-labels` | At least one of these labels is on the item. |
-| `and-labels` | Every one of these labels is on the item. |
+| `any-labels` | At least one of these labels is on the item. |
+| `all-labels` | Every one of these labels is on the item. |
 | `not-labels` | None of these labels is on the item. |
 | `id` | Required, non-empty string, unique across all rules after trimming surrounding whitespace. Shown in the log, the `matched-rule` output and `{{rule}}`. |
 | `target` | `issues`, `prs` or `all`. Defaults to the `target` input. |
@@ -87,15 +87,17 @@ Label lists are YAML lists or comma separated strings.
 When updating an existing rules file, rename each `name` key to `id` and give every unnamed rule an explicit ID.
 The `name` key and generated `rule-N` IDs are no longer supported.
 
-Rename the rule keys `or`, `and` and `not` to `or-labels`, `and-labels` and `not-labels`, respectively. Their matching
+Rename the rule keys `or`, `and` and `not` to `any-labels`, `all-labels` and `not-labels`, respectively. Their matching
 behavior is unchanged; the old keys are no longer accepted.
+
+If using the interim names, rename `or-labels` to `any-labels` and `and-labels` to `all-labels`.
 
 The `rules-file` input is required. Move any former workflow `or`, `and` and `not` inputs into a rule in that file,
 using the corresponding suffixed key, and give it an `id`.
 
 There are two kinds of rule:
 
-- **A rule with `or-labels` or `and-labels`** closes the item when every list it sets is satisfied. A `not-labels` in
+- **A rule with `any-labels` or `all-labels`** closes the item when every list it sets is satisfied. A `not-labels` in
   the same rule only stops that rule; if it does not apply, the next rule is checked.
 - **A rule with only `not-labels`** applies when the item has one of the listed labels. The item stays open and the
   rules after it are not checked. It protects the item only from the rules below it. `reason`, `comment` and `lock`

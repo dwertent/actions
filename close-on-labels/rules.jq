@@ -9,11 +9,11 @@
 #
 # A normalized rule has an id, file index (1-based), kind ("close"|"keep"),
 # label lists and action settings.
-# Keys containing hyphens are read with quoted subscripts, for example .["or-labels"].
+# Keys containing hyphens are read with quoted subscripts, for example .["any-labels"].
 
 def trim_ws: gsub("^\\s+|\\s+$"; "");
 
-def allowed_keys: ["id", "or-labels", "and-labels", "not-labels", "target", "reason", "comment", "lock"];
+def allowed_keys: ["id", "any-labels", "all-labels", "not-labels", "target", "reason", "comment", "lock"];
 
 # A list of labels, given as a YAML list or as a comma or newline separated string. null when malformed.
 def label_list:
@@ -32,16 +32,16 @@ def check($at; $index; $defaults):
   . as $r
   | " (index: \($index))" as $position
   | if ($r | type) != "object" then
-      {errors: ["\($at): Rule\($position) must be a mapping with `id` and `or-labels`, `and-labels` or `not-labels`."],
+      {errors: ["\($at): Rule\($position) must be a mapping with `id` and `any-labels`, `all-labels` or `not-labels`."],
        rule: null}
     else
       ($r.id | if type == "string" then trim_ws else null end) as $id
       | ("\($at): Rule" + (if $id == null or $id == "" then "" else " \($id | tojson)" end)
           + $position) as $where
       | [$r | keys[] | select(. as $k | allowed_keys | index([$k]) | not)] as $unknown
-      | (reduce ("or-labels", "and-labels", "not-labels") as $k ({};
+      | (reduce ("any-labels", "all-labels", "not-labels") as $k ({};
           if $r | has($k) then . + {($k): ($r[$k] | label_list)} else . end)) as $lists
-      | (if ($lists | has("or-labels")) or ($lists | has("and-labels")) then "close" else "keep" end) as $kind
+      | (if ($lists | has("any-labels")) or ($lists | has("all-labels")) then "close" else "keep" end) as $kind
       | ($r.target | one_of(["issues", "prs", "all"])) as $target
       | ($r.reason | one_of(["completed", "not_planned"])) as $reason
       | {
@@ -54,7 +54,7 @@ def check($at; $index; $defaults):
                elif $id == null then ["\($where): `id` must be a non-empty string."]
                elif $id == "" then ["\($where): `id` is empty. Set a unique, non-empty string ID."]
                else [] end)
-            + (if ($lists | length) == 0 then ["\($where) needs `or-labels`, `and-labels` or `not-labels`."] else [] end)
+            + (if ($lists | length) == 0 then ["\($where) needs `any-labels`, `all-labels` or `not-labels`."] else [] end)
             + [$lists | to_entries[]
                 | if .value == null then "\($where): `\(.key)` must be a list of labels."
                   elif (.value | length) == 0 then "\($where): `\(.key)` is empty."
@@ -64,7 +64,7 @@ def check($at; $index; $defaults):
                else [] end)
             + (if $kind == "keep" then
                  [("reason", "comment", "lock") as $k | select($r | has($k))
-                  | "\($where): `\($k)` only applies to rules with `or-labels` or `and-labels`."
+                  | "\($where): `\($k)` only applies to rules with `any-labels` or `all-labels`."
                     + " A rule with only `not-labels` keeps items open."]
                else
                  (if ($r | has("reason")) and $reason == null then
@@ -82,8 +82,8 @@ def check($at; $index; $defaults):
             id: $id,
             index: $index,
             kind: $kind,
-            "or-labels": ($lists["or-labels"] // []),
-            "and-labels": ($lists["and-labels"] // []),
+            "any-labels": ($lists["any-labels"] // []),
+            "all-labels": ($lists["all-labels"] // []),
             "not-labels": ($lists["not-labels"] // []),
             target: ($target // $defaults.target),
             reason: ($reason // $defaults.reason),
@@ -111,7 +111,7 @@ def check($at; $index; $defaults):
           + (map("\($in.path) (index: \(.index))") | join(", "))
           + ". Rule IDs must be unique."]
       + (if ($rule_errors | length) == 0 and ([$rules[] | select(.kind == "close")] | length) == 0 then
-           ["No rule can close anything. Add a rule with `or-labels` or `and-labels`;"
+           ["No rule can close anything. Add a rule with `any-labels` or `all-labels`;"
              + " a rule with only `not-labels` only keeps items open."]
          else [] end)
     ),

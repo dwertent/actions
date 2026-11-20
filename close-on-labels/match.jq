@@ -6,7 +6,7 @@
 # Input:  {"rules": [normalized rule], "labels": [label name], "kind": "issues"|"prs"}
 # Output: {"log": [string], "rule": <rule or null>, "matched": [label name], "unchecked": <number>}
 #
-# Rules are checked in order and the first one that applies decides. A rule with `or-labels` or `and-labels`
+# Rules are checked in order and the first one that applies decides. A rule with `any-labels` or `all-labels`
 # (kind "close") applies when every list it sets is satisfied. A rule with only `not-labels` (kind "keep") applies
 # when the item has one of its labels, and keeps the item open.
 
@@ -25,12 +25,12 @@ def evaluate($have; $kind):
     if any(.["not-labels"][]; present($have)) then {status: "applies"}
     else {status: "no", why: "none of \(.["not-labels"] | quoted) is present"} end
   else
-    [.["and-labels"][] | select(present($have) | not)] as $missing
+    [.["all-labels"][] | select(present($have) | not)] as $missing
     | [.["not-labels"][] | select(present($have))] as $blocked
-    | ((.["or-labels"] | length) == 0 or any(.["or-labels"][]; present($have))) as $or_ok
-    | if $or_ok and ($missing | length) == 0 and ($blocked | length) == 0 then {status: "applies"}
+    | ((.["any-labels"] | length) == 0 or any(.["any-labels"][]; present($have))) as $any_ok
+    | if $any_ok and ($missing | length) == 0 and ($blocked | length) == 0 then {status: "applies"}
       else {status: "no", why: ([
-        (if $or_ok then empty else "none of \(.["or-labels"] | quoted) is present" end),
+        (if $any_ok then empty else "none of \(.["any-labels"] | quoted) is present" end),
         (if ($missing | length) > 0 then "missing \($missing | quoted)" else empty end),
         (if ($blocked | length) > 0 then "has \($blocked | quoted)" else empty end)
       ] | join("; "))}
@@ -44,7 +44,7 @@ def evaluate($have; $kind):
 | (if $hit == null then null else $results[$hit].rule end) as $rule
 | (if $rule == null then []
    elif $rule.kind == "keep" then on_item($in.labels; $rule["not-labels"])
-   else on_item($in.labels; $rule["or-labels"] + $rule["and-labels"]) end) as $matched
+   else on_item($in.labels; $rule["any-labels"] + $rule["all-labels"]) end) as $matched
 | {
     log: [$results | to_entries[] | select($hit == null or .key <= $hit) | .value
       | "Rule \(.rule.id | tojson) (index: \(.rule.index)): " + (

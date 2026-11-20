@@ -3,5 +3,5 @@ rules: # checked in order, the first rule that applies decides
   - id: keep
     not-labels: [keep-open]
   - id: rejected
-    or-labels: [wontfix, invalid, duplicate]
+    any-labels: [wontfix, invalid, duplicate]
     comment: "Closing because this was labeled {{matched}}."
