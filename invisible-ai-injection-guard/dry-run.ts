@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026-Present The Zarf Authors
+
 // Dry run of invisible-ai-injection-guard against a whole repository. Read-only: it never writes to GitHub.
 //
 // Put this file in invisible-ai-injection-guard/ and run from there:
@@ -41,7 +44,12 @@ const outDir = flag('out', '.')
 const withComments = args.includes('--comments')
 
 const octokit = getOctokit(process.env['GH_TOKEN'])
-const log = { debug: () => undefined, warning: (m: string) => console.warn(m) }
+const log = {
+  debug: () => undefined,
+  warning: (message: string) => {
+    console.warn(message)
+  }
+}
 const templateSnippets = await loadTemplateSnippets(octokit, owner, repo, log)
 
 type User = { login?: string; type?: string } | null | undefined
@@ -70,11 +78,12 @@ interface Item {
 
 function check(item: Item, text: Text, labeled: { done: boolean }): Result | undefined {
   const author = text.user?.login ?? 'ghost'
+  const body = text.body ?? ''
   const trusted =
     text.user?.type === 'Bot' && TRUSTED_BOTS.includes(author.toLowerCase()) ? markersFor([author]) : NO_MARKERS
   const isComment = text.subject.type === 'comment'
   const findings = scan(
-    { title: text.title, body: text.body },
+    { title: text.title, body },
     {
       ...DEFAULT_SCAN_OPTIONS,
       // Templates only apply to descriptions, as in the action.
@@ -96,7 +105,7 @@ function check(item: Item, text: Text, labeled: { done: boolean }): Result | und
     number: item.number,
     subject: text.subject,
     title: text.title,
-    body: text.body ?? '',
+    body,
     author,
     authorType: text.user?.type ?? 'User',
     sender: author,
