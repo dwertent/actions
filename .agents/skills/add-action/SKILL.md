@@ -14,4 +14,6 @@ The rules live in `CONTRIBUTING.md` at the repository root. This skill is only t
 5. Write the tests the Testing section requires, with tooling that fits the implementation.
 6. Run the tests and fix failures. Then break the logic on purpose once to confirm a test catches it, and restore it.
 7. Go through every rule ID in `CONTRIBUTING.md` and check the change against it. Fix what does not comply.
-8. Hand off to the human: what was added, how it was tested, which rules needed a judgment call, and anything not verified (for example, that the workflows have not run on GitHub). Do not commit or open a pull request.
+8. Update the agent skill that covers the change. Use [write-evals](../write-evals/SKILL.md) to add, revise,
+   or remove authoring and review cases when their expectations change. Check the evals alongside the action tests.
+9. Hand off to the human: what was added, how it was tested, which rules needed a judgment call, and anything not verified (for example, that the workflows have not run on GitHub). Do not commit or open a pull request.

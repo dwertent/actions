@@ -1,0 +1,53 @@
+name: Skill evals
+
+on:
+  pull_request:
+    paths:
+      - ".agents/skills/**"
+      - "AGENTS.md"
+      - "CONTRIBUTING.md"
+      - "evals/**"
+      - ".github/workflows/skill-evals.yaml"
+  push:
+    branches: [main]
+    paths:
+      - ".agents/skills/**"
+      - "AGENTS.md"
+      - "CONTRIBUTING.md"
+      - "evals/**"
+      - ".github/workflows/skill-evals.yaml"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  skill-evals:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository and pinned eval fixtures
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install eval dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/skill-evals"
+          "$RUNNER_TEMP/skill-evals/bin/python" -m pip install -r evals/requirements.txt
+
+      - name: Validate fixtures and graders
+        run: |
+          "$RUNNER_TEMP/skill-evals/bin/python" -B -m unittest discover -s evals -p 'test_*.py'
+
+      - name: Run live skill evals
+        if: >-
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          "$RUNNER_TEMP/skill-evals/bin/python" -B evals/run.py

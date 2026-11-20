@@ -1,0 +1,43 @@
+{
+  "fixture_revision": "1d371c5843ef2ddb9d3eb1deb91e2c8cdca937df",
+  "cases": [
+    {
+      "id": "review-undeclared-default-change",
+      "skill": "review-action",
+      "prompt": "Review this PR for backward compatibility. Report any compatibility findings with evidence.",
+      "pr_title": "fix(verify-commit-signatures): clarify the commit limit",
+      "pr_description": "Clarify the commit limit for this action.",
+      "replace": ["    default: \"250\"", "    default: \"200\""],
+      "expected": {"rule": "C1", "line": 8, "old_default": "250", "new_default": "200"}
+    },
+    {
+      "id": "review-description-only",
+      "skill": "review-action",
+      "prompt": "Review this PR for backward compatibility. Report any compatibility findings with evidence.",
+      "pr_title": "fix(verify-commit-signatures): clarify the commit limit",
+      "pr_description": "Clarify the commit limit for this action.",
+      "replace": ["Maximum number of commits a pull request may contain.", "Maximum commit count accepted for a pull request."],
+      "expected": {"rule": null}
+    },
+    {
+      "id": "author-default-and-documentation",
+      "skill": "add-action",
+      "prompt": "Lower the default max-commits for verify-commit-signatures to 200. Preserve the inputs, explicit limits, and all other behavior. Update the default in the existing README input table and suggest a PR title. For this exercise, return only the two edited files and the title.",
+      "expected": {"default": "200", "rules": ["C1", "C2", "D3"]}
+    },
+    {
+      "id": "author-a-review-eval",
+      "skill": "write-evals",
+      "prompt": "Write a paired eval for an agent reviewing these two proposed changes for backward compatibility. Supply a grading expectation for each proposal. Both proposals have PR title 'fix(verify-commit-signatures): adjust the commit limit' and description 'Adjust the commit limit for this action.'",
+      "proposals": {
+        "proposal-a": ["Maximum number of commits a pull request may contain.", "Maximum commit count for an incoming pull request."],
+        "proposal-b": ["    default: \"250\"", "    default: \"175\""]
+      },
+      "expected": {
+        "regression": "proposal-b",
+        "control": "proposal-a",
+        "finding": {"rule": "C1", "line": 8, "old_default": "250", "new_default": "175"}
+      }
+    }
+  ]
+}

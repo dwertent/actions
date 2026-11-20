@@ -12,8 +12,14 @@ If a change needs to break a rule, stop and raise it with the human instead of w
 
 - `add-action` scaffolds a new action that follows CONTRIBUTING.md.
 - `review-action` checks a change against CONTRIBUTING.md.
+- `write-evals` designs behavioral evaluations for agents that author or review actions.
 
-Both live in `.agents/skills/`, each as a `SKILL.md`. Read the matching file before starting that kind of task.
+These skills live in `.agents/skills/`, each as a `SKILL.md`. Read the matching file before starting that kind of task.
+
+Every repository change includes an update to the relevant agent skill in the same change. Use
+`write-evals` to keep [eval coverage](evals/README.md) aligned. Add cases for new expectations, revise
+cases for changed expectations, and remove cases for retired expectations. Keep passing controls for
+behavior that still applies.
 
 ## Commands
 
